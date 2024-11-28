@@ -1,20 +1,16 @@
 import time
-from selenium import webdriver
-import pandas as pd
-import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
 import numpy as np
+from selenium import webdriver
+import pandas as pd
+from matplotlib.animation import FuncAnimation
 
 # Initialize the WebDriver
 driver = webdriver.Chrome()
 
 # Open the barchart website
 driver.get("https://www.barchart.com/futures")
-
-
-# Set a timeout for page load
 driver.set_page_load_timeout(10)
-
 
 # JavaScript query to extract table headers
 header_js_query = """
@@ -29,16 +25,10 @@ const rows = Array.from(grid.querySelectorAll('div[role="row"]')).map(row => {
 
 return rows;
 """
-
-# Execute JS to get headers
 header_table_data = driver.execute_script(header_js_query)
-#print("Header Table Data:", header_table_data)
-
 
 # Extract column headers from the first row
 headers = header_table_data[0]
-
-
 
 # JavaScript query to extract data rows
 js_query1 = """
@@ -58,102 +48,76 @@ function getData() {
 }
 return getData();
 """
-# Execute JS to get data
-table_data = driver.execute_script(js_query1)
-#print("Table Data:", table_data)
 
-# Convert the data into a pandas DataFrame
-df = pd.DataFrame(table_data, columns=headers)
+# Setup plot
+plt.figure(figsize=(16, 8))
+plt.title('High, Low, and Mean Values Over Time')
+plt.xlabel('Time (seconds)')
+plt.ylabel('Contract Name')
+plt.grid(True, linestyle='--', linewidth=0.5)
 
-#print("Initial DataFrame:\n", df.head())
+# Initialize time list and data lists
+time_list = []
+contract_names = []
+high_values = {}
+low_values = {}
+mean_values = {}
 
+# Set the animation function to update the plot
+def update_plot(i):
+    # Run the query every 5 seconds and extract the data
+    table_data = driver.execute_script(js_query1)
 
+    # Convert the data into a pandas DataFrame
+    df = pd.DataFrame(table_data, columns=headers)
 
-# Clean the data: convert columns to numeric
-for col in ['Last', 'Change', 'High', 'Low']:
-    if col in df.columns:
-        df[col] = pd.to_numeric(
-            df[col].str.rstrip('s').str.replace(',', '', regex=True), errors='coerce'
-        )
+    # Clean the data: convert columns to numeric
+    for col in ['Last', 'Change', 'High', 'Low']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col].str.rstrip('s').str.replace(',', '', regex=True), errors='coerce')
 
-# Drop rows with missing values
-df = df.dropna(subset=['Last', 'Change', 'High', 'Low'])
-
-# Check if DataFrame is empty after cleaning
-if df.empty:
-    print("DataFrame is empty after cleaning. Ensure data is being scraped correctly.")
-
-
-else:
+    df = df.dropna(subset=['High', 'Low'])
+    
     # Calculate the mean of High and Low values
     df['Mean'] = (df['High'] + df['Low']) / 2
-    offset_high = 0.1 * df['High'].max()  
-    offset_low = 0.1 * df['Low'].max()  
-    offset_mean = 0.1 * df['Mean'].max()
-    # Plot the data
-    plt.figure(figsize=(16, 8))
-    plt.plot(
-        df['Contract Name'],
-        df['High'] + offset_high,
-        label='High',
-        marker='o', 
-        color='blue', 
-        linewidth=3, 
-        markersize=8, 
-        linestyle='-', 
-        alpha=0.8 
-    )
-    plt.plot(
-        df['Contract Name'],
-        df['Low'] + offset_low,  
-        label='Low',
-        marker='^',
-        color='orange',
-        linewidth=3, 
-        markersize=8, 
-        linestyle='--',
-        alpha=0.8
-    )
 
-    plt.plot(
-        df['Contract Name'],
-        df['Mean'] + offset_mean,
-        label='Mean',
-        marker='s',
-        color='green', 
-        linewidth=3, 
-        markersize=8, 
-        linestyle='-.', 
-        alpha=0.8
-    )
-    # Set plot limits, title, and labels
+    # Add the current time to the time list
+    time_list.append(time.time())  # Add current time for the x-axis
     
-    plt.ylim(-20000, 100000)
+    # Loop through each contract and plot its data
+    for _, row in df.iterrows():
+        contract_name = row['Contract Name']
+        if contract_name not in contract_names:
+            contract_names.append(contract_name)
+            high_values[contract_name] = []
+            low_values[contract_name] = []
+            mean_values[contract_name] = []
 
-    plt.xlim(-0.5, len(df['Contract Name']) - 0.5)
+        high_values[contract_name].append(row['High'])
+        low_values[contract_name].append(row['Low'])
+        mean_values[contract_name].append(row['Mean'])
 
-    plt.title('High, Low, and Mean Values')
-    plt.xlabel('Contract Name')
+    # Update the plot
+    plt.cla()  # Clear the current plot
+    
+    # Plot data for each contract name
+    for contract_name in contract_names:
+        if len(high_values[contract_name]) > 0:
+            plt.plot(time_list, high_values[contract_name], label=f'{contract_name} High', linestyle='-', marker='o')
+            plt.plot(time_list, low_values[contract_name], label=f'{contract_name} Low', linestyle='--', marker='^')
+            plt.plot(time_list, mean_values[contract_name], label=f'{contract_name} Mean', linestyle='-.', marker='s')
+
+    plt.title('High, Low, and Mean Values Over Time')
+    plt.xlabel('Time (seconds)')
     plt.ylabel('Values')
     plt.legend()
-    plt.xticks(rotation=45, ha='right')
     plt.grid(True, linestyle='--', linewidth=0.5)
     plt.tight_layout()
-    plt.show()
-    # Identify and print the contract with the largest change
-    max_change_row = df.loc[df['Change'].idxmax()]
-    contract_name = max_change_row['Contract Name']
-    last_value = max_change_row['Last']
-    print(f"Contract Name with largest Change: {contract_name}")
-    print(f"Last Value: {last_value}")
 
-# Save the cleaned and analyzed data to an Excel file
-output_path = "\scrapping and plot\Scrap_and_plot\data_analysis.xlsx"
-with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-    df.to_excel(writer, sheet_name='Raw Data', index=False)
+# Set the animation to update every 5 seconds
+ani = FuncAnimation(plt.gcf(), update_plot, interval=5000, repeat=False, frames=4)  # Run for 20 sec, every 5 sec
 
-print(f"Data saved to {output_path}")
+plt.show()
 
-# Close the WebDriver
-
+# Close the WebDriver after the plot finishes
 driver.quit()
